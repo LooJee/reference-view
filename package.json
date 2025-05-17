@@ -1,0 +1,74 @@
+{
+    "name": "reference-view",
+    "displayName": "References Context (Monaco Panel)",
+    "description": "Shows themed references with code context using Monaco Editor in a bottom panel view.",
+    "version": "0.3.0",
+    "publisher": "LooJee",
+    "engines": {
+        "vscode": "^1.78.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "onView:referencesContextView.mainView"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "references-with-context.showReferencesInPanel",
+                "title": "Find References in Panel View",
+                "category": "References"
+            }
+        ],
+        "menus": {
+            "editor/context": [
+                {
+                    "command": "referencepp.findReferences",
+                    "when": "editorHasReferenceProvider",
+                    "group": "navigation"
+                }
+            ]
+        },
+        "keybindings": [
+            {
+                "command": "references-with-context.showReferencesInPanel",
+                "key": "ctrl+shift+alt+f12",
+                "mac": "cmd+shift+alt+f12",
+                "when": "editorTextFocus"
+            }
+        ],
+        "viewsContainers": {
+            "panel": [
+                {
+                    "id": "referencesContextViewContainer",
+                    "title": "References",
+                    "icon": "media/references-icon.svg"
+                }
+            ]
+        },
+        "views": {
+            "referencesContextViewContainer": [
+                {
+                    "id": "referencesContextView.mainView",
+                    "name": "Context",
+                    "type": "webview",
+                    "contextualTitle": "References Context"
+                }
+            ]
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "lint": "eslint src --ext ts"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.78.0",
+        "@types/node": "18.x",
+        "typescript": "^5.0.0",
+        "monaco-editor": "^0.41.0"
+    }
+}
