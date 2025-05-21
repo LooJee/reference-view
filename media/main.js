@@ -8,33 +8,34 @@
     const initialMessageElement = document.querySelector(".initial-message");
     let monacoEditor;
     let lastClickedLeafTime = 0;
-    const DOUBLE_CLICK_THRESHOLD = 300;
+    const DOUBLE_CLICK_THRESHOLD = 300; // ms
+    let currentMonacoFileUri = "";
+    let currentLineHighlightDecorationIds = [];
 
-    // --- Monaco Editor Setup ---
     if (typeof require === "function" && typeof require.config === "function") {
         const monacoAmdPath = window.MONACO_BASE_PATH.endsWith("/")
             ? window.MONACO_BASE_PATH.slice(0, -1)
             : window.MONACO_BASE_PATH;
-        require.config({ paths: { vs: window.MONACO_BASE_PATH } });
+        require.config({ paths: { vs: monacoAmdPath } });
 
         require(["vs/editor/editor.main"], function () {
             monacoEditor = monaco.editor.create(monacoEditorContainer, {
                 value: "// Select a reference to see its context.",
                 language: "plaintext",
-                theme: "vs", // Will be updated by messages
+                theme: "vs",
                 readOnly: true,
                 automaticLayout: true,
                 scrollBeyondLastLine: false,
                 minimap: { enabled: false },
                 wordWrap: "off",
                 lineNumbers: "on",
-                glyphMargin: true, // For potential future breakpoint/error markers
+                glyphMargin: true,
                 folding: true,
-                renderLineHighlight: "gutter", // Highlights current line in gutter
+                renderLineHighlight: "none",
                 occurrencesHighlight: false,
                 selectionHighlight: false,
                 matchBrackets: "near",
-                fontFamily: "var(--vscode-editor-font-family)", // Attempt to use CSS var
+                fontFamily: "var(--vscode-editor-font-family)",
                 fontSize:
                     parseFloat(
                         getComputedStyle(
@@ -42,16 +43,63 @@
                         ).getPropertyValue("--vscode-font-size")
                     ) || 13,
                 lineHeight:
-                    parseFloat(
+                    (parseFloat(
                         getComputedStyle(
                             document.documentElement
                         ).getPropertyValue("--vscode-editor-line-height")
-                    ) *
-                        (parseFloat(
-                            getComputedStyle(
-                                document.documentElement
-                            ).getPropertyValue("--vscode-font-size")
-                        ) || 13) || 19,
+                    ) || 1.35) *
+                    (parseFloat(
+                        getComputedStyle(
+                            document.documentElement
+                        ).getPropertyValue("--vscode-font-size")
+                    ) || 13),
+            });
+
+            monacoEditor.addAction({
+                id: "vscode-ext-go-to-definition",
+                label: "Go to Definition",
+                keybindings: [monaco.KeyCode.F12],
+                contextMenuGroupId: "navigation",
+                contextMenuOrder: 1.5,
+                run: function (editor) {
+                    const position = editor.getPosition();
+                    if (position && currentMonacoFileUri) {
+                        vscode.postMessage({
+                            command: "monacoAction",
+                            payload: {
+                                actionType: "goToDefinition",
+                                uri: currentMonacoFileUri,
+                                position: {
+                                    lineNumber: position.lineNumber,
+                                    column: position.column,
+                                },
+                            },
+                        });
+                    }
+                },
+            });
+            monacoEditor.addAction({
+                id: "vscode-ext-peek-definition",
+                label: "Peek Definition",
+                keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.F12],
+                contextMenuGroupId: "navigation",
+                contextMenuOrder: 1.6,
+                run: function (editor) {
+                    const position = editor.getPosition();
+                    if (position && currentMonacoFileUri) {
+                        vscode.postMessage({
+                            command: "monacoAction",
+                            payload: {
+                                actionType: "peekDefinition",
+                                uri: currentMonacoFileUri,
+                                position: {
+                                    lineNumber: position.lineNumber,
+                                    column: position.column,
+                                },
+                            },
+                        });
+                    }
+                },
             });
             vscode.postMessage({ command: "webviewReady" });
         });
@@ -62,7 +110,6 @@
     }
 
     function escapeHtml(unsafe) {
-        // Simple escape for HTML in JS
         if (typeof unsafe !== "string") return "";
         return unsafe
             .replace(/&/g, "&")
@@ -72,13 +119,67 @@
             .replace(/'/g, "'");
     }
 
+    function renderReferenceLeafHTML(ref) {
+        const escapedUri = escapeHtml(ref.uri);
+        const escapedFullPath = escapeHtml(ref.fullPath);
+        let escapedPreviewText = escapeHtml(ref.previewText);
+        // Language for this specific leaf, if available from originalLocation
+        let fileExtension = "plaintext";
+        if (
+            ref.originalLocation &&
+            ref.originalLocation.uri &&
+            ref.originalLocation.uri.fsPath
+        ) {
+            fileExtension =
+                ref.originalLocation.uri.fsPath.split(".").pop() || "plaintext";
+        } else if (ref.uri) {
+            // Fallback to uri if originalLocation is missing parts
+            fileExtension = ref.uri.split(".").pop() || "plaintext";
+        }
+
+        // No enclosing symbol prefix here, as it's handled by the function group or directly
+        return `<li class="reference-leaf" data-uri="${escapedUri}" data-line="${
+            ref.line
+        }" data-character="${
+            ref.character
+        }" data-language="${fileExtension}" title="${escapedFullPath} (Line ${
+            ref.line + 1
+        })">
+                    <span class="line-number">L${ref.line + 1}</span>
+                    <span class="preview-text-content">${escapedPreviewText}</span>
+                </li>`;
+    }
+
+    function renderFileChildNodesHTML(childNodes) {
+        let html = "";
+        childNodes.forEach((childNode) => {
+            if (childNode.type === "function") {
+                const escapedFunctionName = escapeHtml(childNode.functionName);
+                html += `<li class="tree-node function-group-node collapsible">
+                            <span class="node-label">
+                                <span class="icon codicon codicon-chevron-right"></span>
+                                <span class="fx-icon codicon codicon-symbol-method"></span> <!-- 'fx' or method icon -->
+                                ${escapedFunctionName}
+                            </span>
+                            <ul class="nested-list function-references">
+                                ${childNode.references
+                                    .map((ref) => renderReferenceLeafHTML(ref))
+                                    .join("")}
+                            </ul>
+                         </li>`;
+            } else if (childNode.type === "leaf") {
+                // Loose reference directly under file
+                html += renderReferenceLeafHTML(childNode);
+            }
+        });
+        return html;
+    }
+
     function renderTreeNodesHTML(nodes) {
         let html = "";
         nodes.forEach((node) => {
-            const escapedDirName = escapeHtml(node.dirName);
-            const escapedFileName = escapeHtml(node.fileName);
-
             if (node.type === "directory") {
+                const escapedDirName = escapeHtml(node.dirName);
                 html += `<li class="tree-node directory-node collapsible">
                             <span class="node-label"><span class="icon codicon codicon-chevron-right"></span> ${escapedDirName}</span>
                             <ul class="nested-list">${renderTreeNodesHTML(
@@ -86,42 +187,18 @@
                             )}</ul>
                          </li>`;
             } else if (node.type === "file") {
+                const escapedFileName = escapeHtml(node.fileName);
                 html += `<li class="tree-node file-node collapsible">
                             <span class="node-label"><span class="icon codicon codicon-chevron-right"></span> ${escapedFileName}</span>
-                            <ul class="nested-list">
-                                ${node.references
-                                    .map((ref) => {
-                                        const escapedUri = escapeHtml(ref.uri);
-                                        const escapedFullPath = escapeHtml(
-                                            ref.fullPath
-                                        );
-                                        const escapedPreviewText = escapeHtml(
-                                            ref.previewText
-                                        );
-                                        const fileExtension =
-                                            ref.originalLocation.uri.fsPath
-                                                .split(".")
-                                                .pop() || "plaintext";
-                                        return `<li class="reference-leaf" data-uri="${escapedUri}" data-line="${
-                                            ref.line
-                                        }" data-character="${
-                                            ref.character
-                                        }" data-language="${fileExtension}" title="${escapedFullPath} (Line ${
-                                            ref.line + 1
-                                        })">
-                                                <span class="line-number">L${
-                                                    ref.line + 1
-                                                }</span>
-                                                <span class="preview-text-content">${escapedPreviewText}</span>
-                                            </li>`;
-                                    })
-                                    .join("")}
+                            <ul class="nested-list file-children">
+                                ${renderFileChildNodesHTML(node.children)}
                             </ul>
                          </li>`;
             }
         });
         return html;
     }
+
     function clearAllSelections() {
         const selected = referenceTreeList.querySelector(
             ".reference-leaf.selected"
@@ -134,17 +211,16 @@
     if (referenceTreeList) {
         referenceTreeList.addEventListener("click", (event) => {
             let target = event.target;
-            if (
-                target.matches(".node-label") ||
-                target.parentElement?.matches(".node-label")
-            ) {
-                const labelElement = target.matches(".node-label")
-                    ? target
-                    : target.parentElement;
+
+            // Handle expand/collapse of tree nodes (directory, file, function group)
+            let labelElement = target.closest(".node-label");
+            if (labelElement) {
                 const parentLi = labelElement.closest(".collapsible");
                 if (parentLi) {
                     parentLi.classList.toggle("expanded");
-                    const icon = labelElement.querySelector(".icon.codicon");
+                    const icon = labelElement.querySelector(
+                        ".icon.codicon-chevron-right, .icon.codicon-chevron-down"
+                    );
                     if (icon) {
                         icon.classList.toggle(
                             "codicon-chevron-down",
@@ -156,29 +232,29 @@
                         );
                     }
                 }
-                return;
+                // If the click was on a label, don't process as leaf click.
+                // Check if the click was specifically on a reference leaf if labelElement is also part of a leaf.
+                if (!target.closest(".reference-leaf")) {
+                    return;
+                }
             }
-            let leafElement = target;
-            while (
-                leafElement &&
-                !leafElement.classList.contains("reference-leaf")
-            ) {
-                leafElement = leafElement.parentElement;
-            }
-            if (
-                leafElement &&
-                leafElement.classList.contains("reference-leaf")
-            ) {
+
+            // Handle reference leaf click
+            let leafElement = target.closest(".reference-leaf");
+            if (leafElement) {
                 const currentTime = new Date().getTime();
                 clearAllSelections();
                 leafElement.classList.add("selected");
+
                 const uri = leafElement.dataset.uri;
                 const line = parseInt(leafElement.dataset.line);
                 const lang = leafElement.dataset.language;
+
                 vscode.postMessage({
                     command: "getContextMonaco",
                     payload: { uri, line, language: lang },
                 });
+
                 const isDoubleClick =
                     currentTime - lastClickedLeafTime <
                         DOUBLE_CLICK_THRESHOLD &&
@@ -200,6 +276,7 @@
             }
         });
     }
+
     window.addEventListener("message", (event) => {
         const message = event.data;
         switch (message.command) {
@@ -208,6 +285,41 @@
                     referenceTreeList.innerHTML = renderTreeNodesHTML(
                         message.payload.references
                     );
+                    // Auto-expand first level (directories and files) and function groups
+                    referenceTreeList
+                        .querySelectorAll(
+                            ".directory-node, .file-node, .function-group-node"
+                        )
+                        .forEach((node) => {
+                            // Check if it's a direct child of the main list or a function group
+                            if (
+                                node.parentElement === referenceTreeList ||
+                                (node.parentElement.classList.contains(
+                                    "file-children"
+                                ) &&
+                                    node.classList.contains(
+                                        "function-group-node"
+                                    )) ||
+                                (node.parentElement.classList.contains(
+                                    "nested-list"
+                                ) &&
+                                    node.classList.contains("file-node") &&
+                                    node.parentElement.parentElement
+                                        .parentElement === referenceTreeList) // Expand files under root dirs
+                            ) {
+                                node.classList.add("expanded");
+                                const icon = node.querySelector(
+                                    ".node-label > .icon.codicon-chevron-right"
+                                );
+                                if (icon) {
+                                    // Ensure icon exists
+                                    icon.classList.remove(
+                                        "codicon-chevron-right"
+                                    );
+                                    icon.classList.add("codicon-chevron-down");
+                                }
+                            }
+                        });
                 }
                 if (initialMessageElement) {
                     initialMessageElement.style.display =
@@ -215,50 +327,80 @@
                             ? "block"
                             : "none";
                 }
-                // Auto-select and load first reference if available
                 if (message.payload.references.length > 0) {
                     const firstLeaf =
                         referenceTreeList.querySelector(".reference-leaf");
                     if (firstLeaf) {
-                        // Simulate a click to load its context
-                        // This needs to happen after a very short delay for DOM to be fully ready with new list
                         setTimeout(() => {
-                            firstLeaf.click();
-                            // And also ensure it's scrolled into view if the list itself is scrollable
+                            // Simulate click to load context, ensures leafElement is valid for the click handler
+                            let clickTarget =
+                                firstLeaf.querySelector(
+                                    ".preview-text-content"
+                                ) ||
+                                firstLeaf.querySelector(".line-number") ||
+                                firstLeaf;
+                            const clickEvent = new MouseEvent("click", {
+                                bubbles: true,
+                                cancelable: true,
+                            });
+                            clickTarget.dispatchEvent(clickEvent);
+
                             firstLeaf.scrollIntoView({
-                                behavior: "smooth",
+                                behavior: "auto",
                                 block: "nearest",
                             });
-                        }, 50);
+                        }, 100); // Increased delay slightly for complex DOM updates
                     }
                 } else if (monacoEditor) {
-                    // Clear Monaco if no references
                     monacoEditor.setValue(
                         "// No references found or selected."
                     );
-                    monaco.editor.setModelLanguage(
-                        monacoEditor.getModel(),
-                        "plaintext"
-                    );
+                    if (monacoEditor.getModel()) {
+                        monaco.editor.setModelLanguage(
+                            monacoEditor.getModel(),
+                            "plaintext"
+                        );
+                    }
+                    currentMonacoFileUri = "";
+                    currentLineHighlightDecorationIds =
+                        monacoEditor.deltaDecorations(
+                            currentLineHighlightDecorationIds,
+                            []
+                        );
                 }
                 break;
+
             case "updateMonacoContent":
                 if (monacoEditor) {
-                    const { content, language, revealLine, theme } =
+                    const { content, language, revealLine, theme, fileUri } =
                         message.payload;
+                    currentMonacoFileUri = fileUri;
+
                     monaco.editor.setTheme(theme);
                     let model = monacoEditor.getModel();
                     if (
                         model &&
                         model.getLanguageId() === language &&
-                        !model.isDisposed()
+                        !model.isDisposed() &&
+                        model.uri.toString() === fileUri
                     ) {
-                        model.setValue(content);
+                        // Only set value if content is different or model is the same but needs update
+                        if (model.getValue() !== content) {
+                            model.setValue(content);
+                        }
                     } else {
-                        if (model && !model.isDisposed()) model.dispose(); // Dispose old model
-                        model = monaco.editor.createModel(content, language);
+                        if (model && !model.isDisposed()) model.dispose();
+                        model = monaco.editor.createModel(
+                            content,
+                            language,
+                            monaco.Uri.parse(
+                                fileUri ||
+                                    `inmemory://model/${Date.now()}.${language}`
+                            )
+                        );
                         monacoEditor.setModel(model);
                     }
+
                     monacoEditor.revealLineInCenterIfOutsideViewport(
                         revealLine,
                         monaco.editor.ScrollType.Smooth
@@ -267,9 +409,29 @@
                         lineNumber: revealLine,
                         column: 1,
                     });
-                    // monacoEditor.focus(); // Optionally focus
+
+                    currentLineHighlightDecorationIds =
+                        monacoEditor.deltaDecorations(
+                            currentLineHighlightDecorationIds,
+                            [
+                                {
+                                    range: new monaco.Range(
+                                        revealLine,
+                                        1,
+                                        revealLine,
+                                        model.getLineMaxColumn(revealLine)
+                                    ),
+                                    options: {
+                                        isWholeLine: true,
+                                        className:
+                                            "current-reference-line-highlight",
+                                    },
+                                },
+                            ]
+                        );
                 }
                 break;
+
             case "updateMonacoTheme":
                 if (monacoEditor && message.payload.theme) {
                     monaco.editor.setTheme(message.payload.theme);

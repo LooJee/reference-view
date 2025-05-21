@@ -18,7 +18,7 @@ body {
 }
 .container {
     display: flex; flex-grow: 1; width: 100%; overflow: hidden;
-    padding: 6px; /* Reduced padding a bit */
+    padding: 6px;
 }
 h3 {
     margin-top: 0;
@@ -32,17 +32,16 @@ h3 {
 }
 .references-list-section {
     width: 40%;
-    /* overflow-y: auto; -- Let #reference-tree-container handle its scroll */
     border-right: 1px solid var(--vscode-panel-border, var(--vscode-contrastBorder, #55555530));
     margin-right: 6px;
     padding-right: 6px;
     display: flex;
     flex-direction: column;
 }
-#reference-tree-container { /* New wrapper for tree and initial message */
+#reference-tree-container {
     flex-grow: 1;
-    overflow-y: auto; /* This scrolls if tree is long */
-    position: relative; /* For potential absolute positioning of messages */
+    overflow-y: auto;
+    position: relative;
 }
 .initial-message {
     padding: 10px 5px;
@@ -52,31 +51,50 @@ h3 {
     text-align: center;
 }
 #reference-tree-list { list-style: none; padding: 0; margin: 0; }
-.nested-list { padding-left: 16px; }
+.nested-list { padding-left: 18px; } /* Default indentation */
+.nested-list.function-references { padding-left: 22px; } /* Slightly more for refs under functions */
+
+
 .tree-node .node-label {
-    cursor: pointer; padding: 2px 4px; display: flex; align-items: center;
+    cursor: pointer; padding: 3px 4px; display: flex; align-items: center;
     border-radius: var(--vscode-button-border-radius, 3px);
     transition: background-color 0.05s ease-out; user-select: none;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tree-node .node-label:hover {
     background-color: var(--vscode-list-hoverBackground, #2a2d2e40);
     color: var(--vscode-list-hoverForeground, inherit);
 }
-.tree-node .node-label .icon.codicon {
-    margin-right: 4px; font-size: 16px;
+.tree-node .node-label .icon.codicon { /* Chevron */
+    margin-right: 4px; font-size: 16px; 
     color: var(--vscode-icon-foreground, #c5c5c5);
     transition: transform 0.1s ease-in-out; line-height: 1;
+    flex-shrink: 0; /* Prevent chevron from shrinking */
 }
+
+/* Function Group Specific Styles */
+.function-group-node > .node-label .fx-icon.codicon {
+    font-size: 15px; /* Slightly smaller or same as chevron */
+    margin-right: 5px;
+    color: var(--vscode-symbolIcon-methodForeground, var(--vscode-symbolIcon-functionForeground, #C586C0)); /* VS Code like purple/pink for methods/functions */
+    opacity: 0.9;
+    flex-shrink: 0;
+}
+
+
 .tree-node.collapsible.expanded > .node-label .icon.codicon-chevron-right { transform: rotate(90deg); }
 .tree-node.collapsible > .nested-list { display: none; }
 .tree-node.collapsible.expanded > .nested-list { display: block; }
+
 .reference-leaf {
-    padding: 2px 6px 2px 20px; cursor: pointer;
+    padding: 2px 6px 2px 4px; 
+    cursor: pointer;
     border-radius: var(--vscode-button-border-radius, 3px); margin-bottom: 1px;
     font-size: var(--vscode-font-size);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     transition: background-color 0.05s ease-out, color 0.05s ease-out;
-    border: 1px solid transparent; display: flex; align-items: baseline;
+    border: 1px solid transparent; 
+    display: flex; align-items: baseline; 
 }
 .reference-leaf:hover {
     background-color: var(--vscode-list-hoverBackground, #2a2d2e40);
@@ -88,11 +106,15 @@ h3 {
 }
 .reference-leaf .line-number {
     color: var(--vscode-editorLineNumber-foreground, #858585);
-    margin-right: 6px; font-variant-numeric: tabular-nums; opacity: 0.75;
-    min-width: 2.5em; text-align: right; padding-right: 4px;
+    margin-right: 8px; font-variant-numeric: tabular-nums; opacity: 0.75;
+    min-width: 2.8em; text-align: right; padding-right: 4px;
+    flex-shrink: 0;
 }
 .reference-leaf.selected .line-number { color: var(--vscode-list-activeSelectionForeground, #ffffff); opacity: 1; }
 .reference-leaf .preview-text-content { flex-grow: 1; overflow: hidden; text-overflow: ellipsis; }
+/* Removed .enclosing-symbol from here as it's part of the function group label now */
+
+
 .context-view-section {
     width: 60%; box-sizing: border-box; display: flex;
     flex-direction: column; overflow: hidden;
@@ -101,9 +123,14 @@ h3 {
     flex-grow: 1; min-height: 100px;
     border: 1px solid var(--vscode-editorWidget-border, #33333380);
     border-radius: var(--vscode-button-border-radius, 3px);
-    overflow: hidden; /* Monaco handles its own scrolling */
+    overflow: hidden;
 }
-/* Scrollbar for non-Monaco elements */
+
+.current-reference-line-highlight {
+    background-color: var(--vscode-editor-lineHighlightBackground, rgba(100, 100, 100, 0.15));
+    box-sizing: border-box;
+}
+
 #reference-tree-container::-webkit-scrollbar { width: 8px; height: 8px; }
 #reference-tree-container::-webkit-scrollbar-track { background: var(--vscode-scrollbar-shadow, transparent); }
 #reference-tree-container::-webkit-scrollbar-thumb {
